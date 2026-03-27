@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  /* --foreground: #ffffff; */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+@font-face {
+  font-family: 'Creata';
+  src: url('/fonts/Creata-Thin.otf') format('opentype');
+  font-weight: 100;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Creata';
+  src: url('/fonts/Creata-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Creata';
+  src: url('/fonts/Creata-Medium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    /* HoloVox Brand Colors */
+    --background: 240 67% 8%;
+    --foreground: 240 33% 94%;
+
+    --card: 240 50% 12%;
+    --card-foreground: 240 33% 94%;
+
+    --popover: 240 50% 12%;
+    --popover-foreground: 240 33% 94%;
+
+    /* Coral Pink - Brand Primary */
+    --primary: 345 83% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Deep Navy */
+    --secondary: 240 67% 8%;
+    --secondary-foreground: 240 33% 94%;
+
+    --muted: 240 40% 20%;
+    --muted-foreground: 240 20% 60%;
+
+    /* Royal Blue Accent */
+    --accent: 240 79% 26%;
+    --accent-foreground: 240 33% 94%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 30% 25%;
+    --input: 240 30% 25%;
+    --ring: 345 83% 50%;
+
+    --radius: 0.5rem;
+
+    /* Custom HoloVox tokens */
+    --coral: 345 83% 50%;
+    --coral-glow: 345 90% 60%;
+    --navy: 240 67% 8%;
+    --navy-light: 240 50% 15%;
+    --royal: 240 79% 26%;
+    --cream: 240 33% 94%;
+    --warm-glow: 30 80% 60%;
+    
+    /* Gradients */
+    --gradient-hero: linear-gradient(135deg, hsl(240 67% 5%) 0%, hsl(270 50% 15%) 50%, hsl(300 40% 20%) 100%);
+    --gradient-coral: linear-gradient(135deg, hsl(345 83% 50%) 0%, hsl(320 70% 55%) 100%);
+    --gradient-glow: radial-gradient(ellipse at center, hsl(345 83% 50% / 0.3) 0%, transparent 70%);
+    
+    /* Shadows */
+    --shadow-glow: 0 0 40px hsl(345 83% 50% / 0.4);
+    --shadow-card: 0 8px 32px hsl(240 67% 5% / 0.6);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
