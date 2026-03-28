@@ -1,157 +1,103 @@
-// components/ThreeSixtyView.jsx
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
 export default function ThreeSixtyView({ stream, isVisible }) {
   const containerRef = useRef(null);
-  const videoRef = useRef(null);
-  const rendererRef = useRef(null);
-  const sphereRef = useRef(null);
-  const animationRef = useRef(null);
   const initialized = useRef(false);
 
   useEffect(() => {
-    if (!containerRef.current || !stream || !isVisible) {
-      return;
-    }
-
-    // Only initialize once
-    if (initialized.current) {
-      // Just ensure video is playing
-      if (videoRef.current && videoRef.current.paused) {
-        videoRef.current.play().catch(e => console.log('Play resume:', e));
-      }
-      return;
-    }
-
-    console.log('🎬 Setting up 360° view');
+    if (!containerRef.current || !stream || !isVisible || initialized.current) return;
     initialized.current = true;
 
-    // Create video element
     const video = document.createElement('video');
     video.autoplay = true;
     video.playsInline = true;
     video.loop = true;
     video.muted = false;
-    video.crossOrigin = 'anonymous';
     video.style.position = 'fixed';
     video.style.top = '-9999px';
     video.style.left = '-9999px';
     video.srcObject = stream;
-    video.play().catch(e => console.log('Video play:', e));
-    
-    videoRef.current = video;
+
+    video.onloadedmetadata = () => video.play().catch(() => {});
     document.body.appendChild(video);
 
-    // Setup Three.js
+    const geometry = new THREE.SphereGeometry(500, 48, 32);
+    const texture = new THREE.VideoTexture(video);
+    const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide });
+    const sphere = new THREE.Mesh(geometry, material);
+
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 0.1);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    containerRef.current.innerHTML = '';
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     containerRef.current.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
-
-    // Create sphere
-    const geometry = new THREE.SphereGeometry(500, 64, 64);
-    const texture = new THREE.VideoTexture(video);
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    
-    const material = new THREE.MeshBasicMaterial({
-      map: texture,
-      side: THREE.BackSide
-    });
-    
-    const sphere = new THREE.Mesh(geometry, material);
     scene.add(sphere);
-    sphereRef.current = sphere;
 
-    // Mouse controls
-    let targetX = 0, targetY = 0;
-    let currentX = 0, currentY = 0;
+    let targetY = 0, currentY = 0;
+    let targetX = 0, currentX = 0;
     let isDragging = false;
+    let lastX = 0, lastY = 0;
 
-    const handleMouseMove = (e) => {
+    const onMouseMove = (e) => {
       if (!isDragging) return;
-      targetX = (e.clientX / window.innerWidth) * Math.PI * 2;
-      targetY = (e.clientY / window.innerHeight) * Math.PI;
+      const dx = (e.clientX - lastX) * 0.005;
+      const dy = (e.clientY - lastY) * 0.005;
+      targetY += dx;
+      targetX += dy;
+      targetX = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, targetX));
+      lastX = e.clientX;
+      lastY = e.clientY;
     };
 
-    const handleMouseDown = () => { isDragging = true; };
-    const handleMouseUp = () => { isDragging = false; };
+    const onMouseDown = (e) => {
+      isDragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mouseup', handleMouseUp);
+    const onMouseUp = () => { isDragging = false; };
 
-    // Animation loop
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+
+    let frameId;
     const animate = () => {
-      animationRef.current = requestAnimationFrame(animate);
-      
-      if (video.readyState >= 2) {
-        texture.needsUpdate = true;
-      }
-      
-      if (isDragging) {
-        currentX += (targetX - currentX) * 0.1;
-        currentY += (targetY - currentY) * 0.1;
-      }
-      
-      currentY = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, currentY));
-      sphere.rotation.x = currentY;
-      sphere.rotation.y = currentX;
-      
+      frameId = requestAnimationFrame(animate);
+      currentX += (targetX - currentX) * 0.1;
+      currentY += (targetY - currentY) * 0.1;
+      sphere.rotation.x = currentX;
+      sphere.rotation.y = currentY;
+      if (video.readyState >= 2) texture.needsUpdate = true;
       renderer.render(scene, camera);
     };
-    
     animate();
 
-    const handleResize = () => {
+    const onResize = () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     };
-    
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', onResize);
 
     return () => {
-      // Cleanup only when component unmounts
-      console.log('🧹 Cleaning up 360° view');
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('resize', handleResize);
-      
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      if (rendererRef.current) {
-        rendererRef.current.dispose();
-        if (rendererRef.current.domElement?.parentNode) {
-          rendererRef.current.domElement.parentNode.removeChild(rendererRef.current.domElement);
-        }
-      }
-      if (videoRef.current) {
-        videoRef.current.pause();
-        videoRef.current.srcObject = null;
-        if (videoRef.current.parentNode) {
-          videoRef.current.parentNode.removeChild(videoRef.current);
-        }
-      }
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(frameId);
+      renderer.dispose();
+      video.pause();
+      video.srcObject = null;
+      video.remove();
+      if (containerRef.current) containerRef.current.innerHTML = '';
       initialized.current = false;
     };
   }, [stream, isVisible]);
-
-  // Handle visibility changes
-  useEffect(() => {
-    if (videoRef.current && isVisible) {
-      if (videoRef.current.paused) {
-        videoRef.current.play().catch(e => console.log('Resume play:', e));
-      }
-    }
-  }, [isVisible]);
 
   if (!stream) {
     return (
