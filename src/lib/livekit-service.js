@@ -8,6 +8,7 @@ export class LiveKitService {
 
   async joinMeeting(roomId, userId, isHost, callbacks) {
     try {
+      
       // 1. Get token from your server
       const res = await fetch(this.tokenUrl, {
         method: 'POST',
