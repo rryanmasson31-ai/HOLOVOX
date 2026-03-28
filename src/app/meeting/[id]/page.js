@@ -1,372 +1,179 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
-import { useParams, useSearchParams, useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
-import { LiveKitService } from "@/lib/livekit-service";
-import {
-  Mic, MicOff, Video, VideoOff, Phone, Maximize2, Users, Copy, Crown,
-  UserIcon, X, AlertCircle, Check,
-} from "lucide-react";
 
-// Dynamically import ThreeSixtyView to avoid SSR issues
-const ThreeSixtyView = dynamic(() => import("@/components/ThreeSixtyView"), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-900 to-blue-900">
-      <div className="text-center">
-        <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-white/60">Loading 360° view...</p>
-      </div>
-    </div>
-  ),
-});
+import { useEffect, useRef, useState } from "react";
+import liveKitService from "@/lib/livekit-service";
 
-export default function MeetingPage() {
-  const { id: roomId } = useParams();
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const isHost = searchParams.get("role") === "host";
-  const joinAttempted = useRef(false);
-
-  const [liveKitService] = useState(() => new LiveKitService());
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStreams, setRemoteStreams] = useState(new Map());
-  const [participants, setParticipants] = useState(new Map());
-  const [connectionState, setConnectionState] = useState("connecting");
-  const [viewMode, setViewMode] = useState("360");
-  const [activeStreamId, setActiveStreamId] = useState("local");
-  const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const [showParticipants, setShowParticipants] = useState(false);
-  const [showControls, setShowControls] = useState(true);
-  const [showNotification, setShowNotification] = useState(null);
+export default function MeetingPage({ params }) {
+  const { id } = params;
 
   const localVideoRef = useRef(null);
-  const mainVideoRef = useRef(null);
-  const controlsTimeoutRef = useRef(null);
 
-  const notify = (message, type = "info") => {
-    setShowNotification({ message, type });
-    setTimeout(() => setShowNotification(null), 3000);
-  };
+  const [localStream, setLocalStream] = useState(null);
+  const [participants, setParticipants] = useState([]);
 
+  const [videoEnabled, setVideoEnabled] = useState(true);
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [screenSharing, setScreenSharing] = useState(false);
+
+  // 🔥 JOIN MEETING
   useEffect(() => {
-    const handleMouseMove = () => {
-      setShowControls(true);
-      clearTimeout(controlsTimeoutRef.current);
-      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3000);
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      clearTimeout(controlsTimeoutRef.current);
-    };
-  }, []);
+    async function start() {
+      const res = await fetch("http://localhost:3001/get-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomName: id,
+          identity: "user-" + Math.floor(Math.random() * 10000),
+        }),
+      });
 
-  useEffect(() => {
-    if (joinAttempted.current) return;
-    joinAttempted.current = true;
+      const { token, url } = await res.json();
 
-    const userId = localStorage.getItem("meeting_user_id") || crypto.randomUUID();
-    localStorage.setItem("meeting_user_id", userId);
+      await liveKitService.joinMeeting(url, token, {
+        onLocalStream: (stream) => {
+          setLocalStream(stream);
+        },
 
-    console.log("🎬 Initializing meeting...");
-    console.log(`   Room: ${roomId}`);
-    console.log(`   User: ${userId}`);
-    console.log(`   Role: ${isHost ? "Host" : "Guest"}`);
+        onRemoteStream: ({ id, stream }) => {
+          setParticipants((prev) => {
+            const exists = prev.find((p) => p.id === id);
 
-    const callbacks = {
-      onConnected: () => {
-        console.log("✅ Connected to meeting");
-        setConnectionState("connected");
-        notify("Connected to meeting", "success");
-      },
-      onLocalStream: (stream) => {
-        console.log("📹 Local stream received");
-        setLocalStream(stream);
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-        if (activeStreamId === "local" && mainVideoRef.current) {
-          mainVideoRef.current.srcObject = stream;
-        }
-      },
-      onVideoTrack: (participantId, stream) => {
-        console.log(`📹 Video track from ${participantId}`);
-        setRemoteStreams((prev) => new Map(prev).set(participantId, stream));
-        if (activeStreamId === participantId && mainVideoRef.current) {
-          mainVideoRef.current.srcObject = stream;
-        }
-      },
-      onParticipantConnected: (participantId, isHostParticipant) => {
-        console.log(`👤 Participant connected: ${participantId}`);
-        setParticipants((prev) => new Map(prev).set(participantId, { isHost: isHostParticipant }));
-        notify(`${isHostParticipant ? "Host" : "Guest"} joined`, "info");
-      },
-      onParticipantDisconnected: (participantId) => {
-        console.log(`👋 Participant disconnected: ${participantId}`);
-        setParticipants((prev) => {
-          const next = new Map(prev);
-          next.delete(participantId);
-          return next;
-        });
-        setRemoteStreams((prev) => {
-          const next = new Map(prev);
-          next.delete(participantId);
-          return next;
-        });
-        if (activeStreamId === participantId) {
-          setActiveStreamId("local");
-          if (mainVideoRef.current && localStream) mainVideoRef.current.srcObject = localStream;
-        }
-        notify("Participant left", "info");
-      },
-      onError: (error) => {
-        console.error("Meeting error:", error);
-        setConnectionState("error");
-        notify(error, "error");
-      },
-      onConnectionState: (state) => {
-        if (state === "reconnecting") notify("Connection lost, reconnecting...", "warning");
-        else if (state === "reconnected") notify("Reconnected", "success");
-        else if (state === "disconnected") notify("Disconnected from meeting", "error");
-      },
-    };
+            if (exists) {
+              return prev.map((p) =>
+                p.id === id ? { ...p, stream } : p
+              );
+            }
 
-    liveKitService.joinMeeting(roomId, userId, isHost, callbacks);
-    return () => {
-      console.log("🧹 Cleaning up meeting...");
-      liveKitService.leaveMeeting();
-      joinAttempted.current = false;
-    };
-  }, [roomId, isHost]);
-
-  useEffect(() => {
-    if (!mainVideoRef.current) return;
-    const newStream = activeStreamId === "local" ? localStream : remoteStreams.get(activeStreamId);
-    if (newStream) mainVideoRef.current.srcObject = newStream;
-    else mainVideoRef.current.srcObject = null;
-  }, [activeStreamId, localStream, remoteStreams]);
-
-  const handleToggleMute = async () => {
-    const muted = await liveKitService.toggleMute();
-    setIsMuted(muted);
-    notify(muted ? "Microphone muted" : "Microphone unmuted");
-  };
-  const handleToggleVideo = async () => {
-    const off = await liveKitService.toggleVideo();
-    setIsVideoOff(off);
-    notify(off ? "Camera turned off" : "Camera turned on");
-  };
-  const handleLeave = async () => {
-    await liveKitService.leaveMeeting();
-    router.push("/home");
-  };
-  const copyInviteLink = () => {
-    const link = `${window.location.origin}/meeting/${roomId}?role=guest`;
-    navigator.clipboard.writeText(link);
-    notify("Invite link copied!", "success");
-  };
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      notify("Fullscreen mode", "info");
-    } else {
-      document.exitFullscreen();
+            return [...prev, { id, stream }];
+          });
+        },
+      });
     }
-  };
 
-  const activeStream = activeStreamId === "local" ? localStream : remoteStreams.get(activeStreamId);
-  const participantCount = participants.size + 1;
+    start();
+  }, [id]);
+
+  // 🔥 LOCAL VIDEO BIND
+  useEffect(() => {
+    if (localStream && localVideoRef.current) {
+      const video = localVideoRef.current;
+
+      video.srcObject = localStream;
+      video.muted = true;
+      video.playsInline = true;
+
+      video.play().catch(() => {});
+    }
+  }, [localStream]);
 
   return (
-    <div className="h-screen w-screen bg-black text-white flex overflow-hidden">
-      {/* Notification Toast */}
-      {showNotification && (
-        <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 ${
-          showNotification.type === "success" ? "bg-green-600" :
-          showNotification.type === "error" ? "bg-red-600" : "bg-blue-600"
-        }`}>
-          {showNotification.type === "success" && <Check size={18} />}
-          {showNotification.type === "error" && <AlertCircle size={18} />}
-          <span className="text-sm font-medium">{showNotification.message}</span>
-        </div>
-      )}
+    <div className="w-full h-screen bg-black text-white flex flex-col">
 
-      <div className="flex-1 flex flex-col relative">
-        {/* Top Bar */}
-        <div className={`absolute top-0 left-0 right-0 z-20 px-6 py-4 bg-gradient-to-b from-black/60 to-transparent transition-transform duration-300 ${
-          showControls ? "translate-y-0" : "-translate-y-full"
-        }`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-lg font-semibold flex items-center gap-2">
-                Meeting Room
-                {isHost && <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded-full text-xs flex items-center gap-1"><Crown size={12} /> Host</span>}
-              </h1>
-              <p className="text-xs text-white/60">Room: {roomId.slice(0, 8)}... • {participantCount} participant{participantCount !== 1 ? "s" : ""}</p>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => setViewMode((m) => (m === "normal" ? "360" : "normal"))}
-                className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition flex items-center gap-2">
-                {viewMode === "normal" ? (<><Maximize2 size={16} /> Switch to 360°</>) : (<><Video size={16} /> Switch to Normal</>)}
-              </button>
-            </div>
-          </div>
+      {/* HEADER */}
+      <div className="p-3 border-b border-gray-800">
+        Meeting ID: {id}
+      </div>
+
+      {/* VIDEO AREA */}
+      <div className="flex flex-1 gap-2 p-2">
+
+        {/* LOCAL */}
+        <div className="w-64 h-40 bg-gray-900">
+          <video
+            ref={localVideoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full h-full object-cover"
+          />
         </div>
 
-        {/* Video Area */}
-        <div className="flex-1 relative bg-black overflow-hidden">
-          {connectionState === "connecting" && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-20">
-              <div className="text-center">
-                <div className="w-16 h-16 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="text-white/80">Connecting to meeting...</p>
-              </div>
-            </div>
-          )}
-
-          <div className="w-full h-full">
-            {/* Normal View */}
-            <div className={`w-full h-full relative ${viewMode === "normal" ? "block" : "hidden"}`}>
-              {activeStream ? (
-                <video ref={mainVideoRef} autoPlay playsInline className="w-full h-full object-contain bg-black" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-900 to-gray-800">
-                  <div className="text-center">
-                    <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-4">
-                      {activeStreamId === "local" ? <VideoOff size={48} /> : <UserIcon size={48} />}
-                    </div>
-                    <p className="text-white/60">{activeStreamId === "local" ? "Your camera is off" : "Waiting for video stream..."}</p>
-                  </div>
-                </div>
-              )}
-              <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm px-3 py-1 rounded-lg text-xs">Standard View</div>
-            </div>
-
-            {/* 360° View */}
-            <div className={`w-full h-full ${viewMode === "360" ? "block" : "hidden"}`}>
-              {activeStream ? (
-                <ThreeSixtyView stream={activeStream} isVisible={viewMode === "360"} />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-900 to-blue-900">
-                  <div className="text-center">
-                    <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-4"><Maximize2 size={48} /></div>
-                    <p className="text-white/60">Select a video source for 360° view</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Thumbnails Bar */}
-          <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent pt-8 pb-4 px-6 transition-transform duration-300 ${
-            showControls ? "translate-y-0" : "translate-y-full"
-          }`}>
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              <button onClick={() => setActiveStreamId("local")}
-                className={`relative flex-shrink-0 w-40 h-24 rounded-xl overflow-hidden border-2 transition-all ${
-                  activeStreamId === "local" ? "border-cyan-500 shadow-lg" : "border-white/20 hover:border-white/40"
-                }`}>
-                <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                <div className="absolute bottom-1 left-1 bg-black/60 px-2 py-0.5 rounded text-xs flex items-center gap-1"><UserIcon size={10} /> You {isHost && "👑"}</div>
-                <div className="absolute top-1 right-1 flex gap-1">
-                  {isMuted && <MicOff size={12} className="text-red-400" />}
-                  {isVideoOff && <VideoOff size={12} className="text-red-400" />}
-                </div>
-              </button>
-
-              {Array.from(remoteStreams.entries()).map(([id, stream]) => {
-                const isActive = activeStreamId === id;
-                const participant = participants.get(id);
-                return (
-                  <button key={id} onClick={() => setActiveStreamId(id)}
-                    className={`relative flex-shrink-0 w-40 h-24 rounded-xl overflow-hidden border-2 transition-all ${
-                      isActive ? "border-cyan-500 shadow-lg" : "border-white/20 hover:border-white/40"
-                    }`}>
-                    <video autoPlay playsInline className="w-full h-full object-cover" ref={(el) => { if (el && stream) el.srcObject = stream; }} />
-                    <div className="absolute bottom-1 left-1 bg-black/60 px-2 py-0.5 rounded text-xs flex items-center gap-1">
-                      {participant?.isHost ? <Crown size={10} /> : <UserIcon size={10} />}
-                      {participant?.isHost ? "Host" : "Guest"}
-                    </div>
-                  </button>
-                );
-              })}
-              {remoteStreams.size === 0 && connectionState === "connected" && (
-                <div className="flex-shrink-0 w-40 h-24 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
-                  <p className="text-xs text-white/40">Waiting for others...</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Controls Bar */}
-        <div className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-20 transition-transform duration-300 ${
-          showControls ? "translate-y-0" : "translate-y-24"
-        }`}>
-          <div className="flex gap-3 bg-black/80 backdrop-blur-xl px-4 py-3 rounded-2xl border border-white/20 shadow-2xl">
-            <button onClick={handleToggleMute} className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${isMuted ? "bg-red-600" : "bg-white/10 hover:bg-white/20"}`}>
-              {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
-            </button>
-            <button onClick={handleToggleVideo} className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${isVideoOff ? "bg-red-600" : "bg-white/10 hover:bg-white/20"}`}>
-              {isVideoOff ? <VideoOff size={20} /> : <Video size={20} />}
-            </button>
-            <button onClick={toggleFullscreen} className="w-12 h-12 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center">
-              <Maximize2 size={20} />
-            </button>
-            <button onClick={() => setShowParticipants(!showParticipants)} className="w-12 h-12 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center relative">
-              <Users size={20} />
-              {participantCount > 1 && <span className="absolute -top-1 -right-1 w-5 h-5 bg-cyan-500 rounded-full text-xs flex items-center justify-center">{participantCount}</span>}
-            </button>
-            <button onClick={handleLeave} className="w-14 h-14 rounded-xl bg-red-600 hover:bg-red-700 flex items-center justify-center shadow-lg shadow-red-600/30">
-              <Phone size={24} className="rotate-135" />
-            </button>
-          </div>
+        {/* REMOTE */}
+        <div className="flex-1 grid grid-cols-3 gap-2">
+          {participants.map((p) => (
+            <RemoteVideo key={p.id} stream={p.stream} />
+          ))}
         </div>
       </div>
 
-      {/* Participants Sidebar */}
-      {showParticipants && (
-        <div className="absolute right-0 top-0 bottom-0 w-80 bg-black/90 backdrop-blur-xl border-l border-white/10 flex flex-col z-30 animate-slide-in-right">
-          <div className="p-6 border-b border-white/10 flex justify-between items-center">
-            <div><h3 className="font-semibold text-lg">Participants</h3><p className="text-xs text-white/40 mt-1">{participantCount} in meeting</p></div>
-            <button onClick={() => setShowParticipants(false)} className="p-2 hover:bg-white/10 rounded-lg"><X size={20} /></button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-3">
-            <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center"><UserIcon size={18} /></div>
-                <div><p className="text-sm font-medium flex items-center gap-2">You {isHost && <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded-full text-xs flex items-center gap-1"><Crown size={10} /> Host</span>}</p><p className="text-xs text-green-400 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400"></span>Connected</p></div>
-              </div>
-              <div className="flex gap-2">{isMuted && <MicOff size={14} className="text-red-400" />}{isVideoOff && <VideoOff size={14} className="text-red-400" />}</div>
-            </div>
-            {Array.from(participants.entries()).map(([id, data]) => (
-              <div key={id} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${data.isHost ? "bg-gradient-to-br from-amber-500 to-orange-600" : "bg-white/10"}`}>
-                    {data.isHost ? <Crown size={18} /> : <UserIcon size={18} />}
-                  </div>
-                  <div><p className="text-sm font-medium">{data.isHost ? "Host" : "Guest"}</p><p className="text-xs text-green-400 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400"></span>Connected</p></div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="p-6 border-t border-white/10">
-            <button onClick={copyInviteLink} className="w-full bg-gradient-to-r from-[#E62064] to-[#E62064]/80 hover:from-[#E62064]/90 hover:to-[#E62064]/70 py-3 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2">
-              <Copy size={16} /> Copy Invite Link
-            </button>
-          </div>
-        </div>
-      )}
+      {/* CONTROLS */}
+      <div className="p-3 flex justify-center gap-3 bg-gray-900">
 
-      <style jsx>{`
-        @keyframes slide-in-right {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
-        }
-        .animate-slide-in-right {
-          animation: slide-in-right 0.3s ease-out;
-        }
-      `}</style>
+        {/* VIDEO */}
+        <button
+          onClick={() => {
+            const newState = !videoEnabled;
+            setVideoEnabled(newState);
+            liveKitService.toggleVideo(newState);
+          }}
+          className="px-4 py-2 bg-gray-700 rounded"
+        >
+          {videoEnabled ? "Cam Off" : "Cam On"}
+        </button>
+
+        {/* MIC */}
+        <button
+          onClick={() => {
+            const newState = !micEnabled;
+            setMicEnabled(newState);
+            liveKitService.toggleMic(newState);
+          }}
+          className="px-4 py-2 bg-gray-700 rounded"
+        >
+          {micEnabled ? "Mute" : "Unmute"}
+        </button>
+
+        {/* SCREEN SHARE */}
+        <button
+          onClick={async () => {
+            if (!screenSharing) {
+              await liveKitService.startScreenShare();
+            } else {
+              liveKitService.stopScreenShare();
+            }
+
+            setScreenSharing(!screenSharing);
+          }}
+          className="px-4 py-2 bg-blue-600 rounded"
+        >
+          {screenSharing ? "Stop Share" : "Share Screen"}
+        </button>
+
+        {/* LEAVE */}
+        <button
+          onClick={() => {
+            liveKitService.leaveMeeting();
+            window.location.href = "/";
+          }}
+          className="px-4 py-2 bg-red-600 rounded"
+        >
+          Leave
+        </button>
+
+      </div>
     </div>
+  );
+}
+
+// 🔥 REMOTE VIDEO COMPONENT
+function RemoteVideo({ stream }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (ref.current && stream) {
+      ref.current.srcObject = stream;
+      ref.current.muted = true;
+      ref.current.playsInline = true;
+      ref.current.play().catch(() => {});
+    }
+  }, [stream]);
+
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      className="w-full h-40 bg-black object-cover"
+    />
   );
 }
